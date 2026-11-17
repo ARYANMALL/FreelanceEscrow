@@ -1,0 +1,60 @@
+
+.app {
+  min-height: 100vh;
+  background: #f4f6fb;
+  color: #172033;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 8%;
+  background: white;
+}
+
+header span {
+  color: #635bdb;
+}
+
+main {
+  max-width: 1000px;
+  margin: 50px auto;
+  padding: 20px;
+}
+
+.roles, .create {
+  display: flex;
+  gap: 12px;
+  margin: 25px 0;
+}
+
+button {
+  background: #635bdb;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+input {
+  padding: 12px;
+  border: 1px solid #ccc;
+  border-radius: 7px;
+  width: 280px;
+}
+
+.projects {
+  background: white;
+  padding: 25px;
+  border-radius: 12px;
+  margin-top: 30px;
+}
+
+.project {
+  border: 1px solid #ddd;
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 15px;
+}
