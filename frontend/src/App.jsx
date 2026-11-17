@@ -1,18 +1,12 @@
 
-import { useState, useEffect } from "react";
-import {
-  BrowserProvider,
-  Contract,
-  formatEther,
-  parseEther
-} from "ethers";
-
+import { useState } from "react";
+import { BrowserProvider, Contract, formatEther, parseEther } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "./contract";
 import "./App.css";
 
 function App() {
   const [account, setAccount] = useState("");
-  const [balance, setBalance] = useState("");
+  const [balance, setBalance] = useState("0");
   const [contract, setContract] = useState(null);
   const [projects, setProjects] = useState([]);
   const [message, setMessage] = useState("");
@@ -26,84 +20,26 @@ function App() {
   const [projectId, setProjectId] = useState("");
   const [milestoneId, setMilestoneId] = useState("0");
 
-  // Connect wallet and initialize contract
-  async function connectWallet(requestAccess = true) {
-    try {
-      if (!window.ethereum) {
-        setMessage("Please install MetaMask.");
-        return;
-      }
-
-      const provider = new BrowserProvider(window.ethereum);
-
-      const accounts = await provider.send(
-        requestAccess ? "eth_requestAccounts" : "eth_accounts",
-        []
-      );
-
-      if (!accounts.length) {
-        setMessage("Please connect your MetaMask wallet.");
-        setContract(null);
-        setAccount("");
-        setProjects([]);
-        return;
-      }
-
-      const network = await provider.getNetwork();
-
-      if (network.chainId !== 1337n) {
-        setMessage(
-          "Please switch MetaMask to Ganache (Chain ID 1337)."
-        );
-        setContract(null);
-        setProjects([]);
-        return;
-      }
-
-      const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
-      const userBalance = await provider.getBalance(userAddress);
-
-      const escrowContract = new Contract(
-        CONTRACT_ADDRESS,
-        ABI,
-        signer
-      );
-
-      setAccount(userAddress);
-      setBalance(formatEther(userBalance));
-      setContract(escrowContract);
-      setMessage("Wallet connected successfully!");
-
-      await loadProjects(escrowContract);
-
-    } catch (error) {
-      console.error("Wallet connection error:", error);
-      setMessage(error.shortMessage || error.message);
-    }
+  async function updateBalance(address) {
+    const provider = new BrowserProvider(window.ethereum);
+    const value = await provider.getBalance(address);
+    setBalance(Number(formatEther(value)).toFixed(4));
   }
 
-  // Fetch all projects from blockchain
-  async function loadProjects(activeContract = contract) {
+  async function loadProjects(activeContract) {
+    if (!activeContract) return;
+
     try {
-      if (!activeContract) {
-        setMessage("Please connect your wallet first.");
-        return;
-      }
-
-      setLoading(true);
-
       const count = Number(await activeContract.projectCount());
-      const projectList = [];
+      const list = [];
 
       for (let i = 1; i <= count; i++) {
         const data = await activeContract.getProject(i);
-
         const milestoneCount = Number(
           await activeContract.getMilestoneCount(i)
         );
 
-        projectList.push({
+        list.push({
           id: i,
           client: data[0],
           freelancer: data[1],
@@ -114,26 +50,49 @@ function App() {
         });
       }
 
-      setProjects(projectList);
-      setMessage(
-        projectList.length
-          ? `${projectList.length} project(s) loaded successfully.`
-          : "No projects found on this contract."
-      );
-
+      setProjects(list);
     } catch (error) {
       console.error("Project loading error:", error);
-      setMessage(
-        error.shortMessage ||
-        error.reason ||
-        error.message
-      );
-    } finally {
-      setLoading(false);
+      setMessage(error.shortMessage || error.message);
     }
   }
 
-  // Create a new project
+  async function connectWallet() {
+    try {
+      if (!window.ethereum) {
+        setMessage("Please install MetaMask.");
+        return;
+      }
+
+      const provider = new BrowserProvider(window.ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
+
+      if (!accounts.length) return;
+
+      const network = await provider.getNetwork();
+
+      if (network.chainId !== 1337n) {
+        setMessage("Please switch MetaMask to Ganache (Chain ID 1337).");
+        return;
+      }
+
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+
+      const escrow = new Contract(CONTRACT_ADDRESS, ABI, signer);
+
+      setAccount(address);
+      setContract(escrow);
+      await updateBalance(address);
+      await loadProjects(escrow);
+
+      setMessage("Wallet connected successfully!");
+    } catch (error) {
+      console.error(error);
+      setMessage(error.shortMessage || error.message);
+    }
+  }
+
   async function createProject(event) {
     event.preventDefault();
 
@@ -143,78 +102,61 @@ function App() {
         return;
       }
 
-      if (!freelancer || !title.trim() ||
-          !description.trim() || !amount) {
+      if (!freelancer || !title || !description || !amount) {
         setMessage("Please fill in all project details.");
         return;
       }
 
-      const payment = parseEther(amount);
+      if (!/^0x[a-fA-F0-9]{40}$/.test(freelancer)) {
+        setMessage("Enter a valid freelancer wallet address.");
+        return;
+      }
 
-      if (payment <= 0n) {
-        setMessage("Project amount must be greater than zero.");
+      if (Number(amount) <= 0) {
+        setMessage("Enter an amount greater than zero.");
         return;
       }
 
       setLoading(true);
-      setMessage("Please confirm the transaction in MetaMask...");
+      setMessage("Waiting for transaction confirmation...");
+
+      const value = parseEther(amount);
 
       const tx = await contract.createProject(
         freelancer,
-        title.trim(),
-        [description.trim()],
-        [payment],
-        { value: payment }
+        title,
+        [description],
+        [value],
+        { value }
       );
 
-      setMessage("Transaction submitted. Waiting for confirmation...");
+      await tx.wait();
 
-      const receipt = await tx.wait();
-
-      if (receipt.status !== 1) {
-        throw new Error("Project creation transaction failed.");
-      }
-
+      setMessage("Project created successfully!");
       setFreelancer("");
       setTitle("");
       setDescription("");
       setAmount("");
 
-      setMessage("Project created successfully!");
-
       await loadProjects(contract);
-
-      const provider = new BrowserProvider(window.ethereum);
-      const updatedBalance = await provider.getBalance(account);
-      setBalance(formatEther(updatedBalance));
-
+      await updateBalance(account);
     } catch (error) {
-      console.error("Create project error:", error);
-      setMessage(
-        error.shortMessage ||
-        error.reason ||
-        error.message
-      );
+      console.error(error);
+      setMessage(error.shortMessage || error.message);
     } finally {
       setLoading(false);
     }
   }
 
-  // Submit milestone
   async function submitMilestone() {
     try {
-      if (!contract) {
-        setMessage("Connect your wallet first.");
-        return;
-      }
-
-      if (!projectId.trim()) {
-        setMessage("Enter a valid Project ID.");
+      if (!contract || !projectId) {
+        setMessage("Connect wallet and enter a project ID.");
         return;
       }
 
       setLoading(true);
-      setMessage("Confirm milestone submission in MetaMask...");
+      setMessage("Submitting milestone...");
 
       const tx = await contract.submitMilestone(
         Number(projectId),
@@ -224,36 +166,24 @@ function App() {
       await tx.wait();
 
       setMessage("Milestone submitted successfully!");
-
       await loadProjects(contract);
-
     } catch (error) {
-      console.error("Submit milestone error:", error);
-      setMessage(
-        error.shortMessage ||
-        error.reason ||
-        error.message
-      );
+      console.error(error);
+      setMessage(error.shortMessage || error.message);
     } finally {
       setLoading(false);
     }
   }
 
-  // Approve milestone and release payment
   async function approveMilestone() {
     try {
-      if (!contract) {
-        setMessage("Connect your wallet first.");
-        return;
-      }
-
-      if (!projectId.trim()) {
-        setMessage("Enter a valid Project ID.");
+      if (!contract || !projectId) {
+        setMessage("Connect wallet and enter a project ID.");
         return;
       }
 
       setLoading(true);
-      setMessage("Confirm milestone approval in MetaMask...");
+      setMessage("Approving milestone...");
 
       const tx = await contract.approveMilestone(
         Number(projectId),
@@ -263,200 +193,233 @@ function App() {
       await tx.wait();
 
       setMessage("Milestone approved and payment released!");
-
       await loadProjects(contract);
-
-      const provider = new BrowserProvider(window.ethereum);
-      const updatedBalance = await provider.getBalance(account);
-
-      setBalance(formatEther(updatedBalance));
-
+      await updateBalance(account);
     } catch (error) {
-      console.error("Approve milestone error:", error);
-      setMessage(
-        error.shortMessage ||
-        error.reason ||
-        error.message
-      );
+      console.error(error);
+      setMessage(error.shortMessage || error.message);
     } finally {
       setLoading(false);
     }
   }
 
-  // Automatically reconnect wallet and reload projects
-  useEffect(() => {
-    if (!window.ethereum) return;
-
-    async function initialize() {
-      const accounts = await window.ethereum.request({
-        method: "eth_accounts"
-      });
-
-      if (accounts.length > 0) {
-        await connectWallet(false);
-      }
-    }
-
-    initialize().catch(console.error);
-
-    const handleAccountsChanged = (accounts) => {
-      if (accounts.length === 0) {
-        setAccount("");
-        setContract(null);
-        setBalance("");
-        setProjects([]);
-        setMessage("Wallet disconnected.");
-      } else {
-        connectWallet(false);
-      }
-    };
-
-    const handleChainChanged = () => {
-      window.location.reload();
-    };
-
-    window.ethereum.on("accountsChanged", handleAccountsChanged);
-    window.ethereum.on("chainChanged", handleChainChanged);
-
-    return () => {
-      window.ethereum.removeListener(
-        "accountsChanged",
-        handleAccountsChanged
-      );
-
-      window.ethereum.removeListener(
-        "chainChanged",
-        handleChainChanged
-      );
-    };
-  }, []);
-
   return (
     <div className="app">
+      <nav className="navbar">
+        <div className="brand">
+          <div className="brand-icon">F</div>
+          <span>Freelance<span className="accent">Chain</span></span>
+        </div>
 
-      <header>
-        <h1>FreelanceChain</h1>
-        <p>Blockchain-powered Freelance Escrow Platform</p>
-
-        <button onClick={() => connectWallet(true)} disabled={loading}>
-          {account ? "Wallet Connected" : "Connect Wallet"}
+        <button
+          className="wallet-button"
+          onClick={connectWallet}
+          disabled={loading}
+        >
+          {account
+            ? `${account.slice(0, 6)}...${account.slice(-4)}`
+            : "Connect Wallet"}
         </button>
+      </nav>
 
-        {account && (
-          <div className="wallet-info">
-            <p>Account: {account}</p>
-            <p>Balance: {Number(balance).toFixed(4)} ETH</p>
-            <p>Network: Local Ganache</p>
+      <main className="container">
+        <section className="hero">
+          <div>
+            <span className="eyebrow">DECENTRALIZED FREELANCING</span>
+            <h1>Work together.<br /><span>Pay with confidence.</span></h1>
+            <p>
+              A secure blockchain-powered escrow platform.
+              Create projects, manage milestones, and release payments transparently.
+            </p>
+          </div>
+
+          <div className="hero-card">
+            <span className="small-label">YOUR WALLET BALANCE</span>
+            <h2>{balance} <span>ETH</span></h2>
+            <div className="network-status">
+              <span className="status-dot"></span>
+              Ganache Local Network
+            </div>
+          </div>
+        </section>
+
+        {message && (
+          <div className="message">
+            {message}
           </div>
         )}
-      </header>
 
-      {message && <p className="message">{message}</p>}
-
-      <main>
-
-        {/* Create Project */}
-        <section>
-          <h2>Create a Project</h2>
-
-          <form onSubmit={createProject}>
-
-            <input
-              type="text"
-              placeholder="Freelancer wallet address"
-              value={freelancer}
-              onChange={(e) => setFreelancer(e.target.value)}
-            />
-
-            <input
-              type="text"
-              placeholder="Project title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-
-            <input
-              type="text"
-              placeholder="Milestone description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-
-            <input
-              type="number"
-              placeholder="Amount in ETH"
-              min="0"
-              step="any"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-
-            <button type="submit" disabled={loading || !contract}>
-              Create Project & Deposit ETH
-            </button>
-
-          </form>
+        <section className="stats">
+          <div className="stat-card">
+            <span>Total Projects</span>
+            <h2>{projects.length}</h2>
+          </div>
+          <div className="stat-card">
+            <span>Active Projects</span>
+            <h2>{projects.filter(p => !p.completed).length}</h2>
+          </div>
+          <div className="stat-card">
+            <span>Completed Projects</span>
+            <h2>{projects.filter(p => p.completed).length}</h2>
+          </div>
         </section>
 
-        {/* Milestone Actions */}
-        <section>
-          <h2>Milestone Actions</h2>
+        <section className="content-grid">
+          <div className="panel">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">GET STARTED</span>
+                <h2>Create a Project</h2>
+              </div>
+              <span className="heading-icon">＋</span>
+            </div>
 
-          <input
-            type="number"
-            min="1"
-            placeholder="Project ID"
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-          />
+            <form onSubmit={createProject} className="project-form">
+              <label>Freelancer Wallet Address</label>
+              <input
+                value={freelancer}
+                onChange={e => setFreelancer(e.target.value)}
+                placeholder="0x..."
+              />
 
-          <input
-            type="number"
-            min="0"
-            placeholder="Milestone ID (starts at 0)"
-            value={milestoneId}
-            onChange={(e) => setMilestoneId(e.target.value)}
-          />
+              <label>Project Title</label>
+              <input
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="e.g. Website Development"
+              />
 
-          <button onClick={submitMilestone} disabled={loading || !contract}>
-            Submit Milestone (Freelancer)
-          </button>
+              <label>Milestone Description</label>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                placeholder="Describe the work to be completed..."
+                rows="3"
+              />
 
-          <button onClick={approveMilestone} disabled={loading || !contract}>
-            Approve Milestone (Client)
-          </button>
+              <label>Milestone Amount (ETH)</label>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder="0.10"
+              />
+
+              <button className="primary-button" disabled={loading || !contract}>
+                {loading ? "Processing..." : "Create Project & Deposit"}
+              </button>
+            </form>
+          </div>
+
+          <div className="panel">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">PROJECT MANAGEMENT</span>
+                <h2>Milestone Actions</h2>
+              </div>
+              <span className="heading-icon">✓</span>
+            </div>
+
+            <div className="project-form">
+              <label>Project ID</label>
+              <input
+                type="number"
+                min="1"
+                value={projectId}
+                onChange={e => setProjectId(e.target.value)}
+                placeholder="Enter project ID"
+              />
+
+              <label>Milestone ID</label>
+              <input
+                type="number"
+                min="0"
+                value={milestoneId}
+                onChange={e => setMilestoneId(e.target.value)}
+                placeholder="0"
+              />
+
+              <button
+                className="primary-button"
+                onClick={submitMilestone}
+                disabled={loading || !contract}
+              >
+                Submit Milestone
+              </button>
+
+              <button
+                className="secondary-button"
+                onClick={approveMilestone}
+                disabled={loading || !contract}
+              >
+                Approve & Release Payment
+              </button>
+
+              <p className="helper-text">
+                Freelancer submits completed work. Client approves it to release payment.
+              </p>
+            </div>
+          </div>
         </section>
 
-        {/* Project Dashboard */}
-        <section>
-          <h2>Project Dashboard</h2>
-
-          <button
-            onClick={() => loadProjects()}
-            disabled={loading || !contract}
-          >
-            {loading ? "Loading..." : "Refresh Projects"}
-          </button>
+        <section className="dashboard">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">YOUR WORKSPACE</span>
+              <h2>Project Dashboard</h2>
+            </div>
+            <span className="project-count">{projects.length} Projects</span>
+          </div>
 
           {projects.length === 0 ? (
-            <p>No projects found.</p>
+            <div className="empty-state">
+              <div className="empty-icon">◇</div>
+              <h3>No projects yet</h3>
+              <p>Connect your wallet and create your first escrow project.</p>
+            </div>
           ) : (
-            projects.map((project) => (
-              <div className="project-card" key={project.id}>
-                <h3>#{project.id} - {project.title}</h3>
-                <p>Client: {project.client}</p>
-                <p>Freelancer: {project.freelancer}</p>
-                <p>Total: {project.totalAmount} ETH</p>
-                <p>Milestones: {project.milestoneCount}</p>
-                <p>
-                  Status: {project.completed ? "Completed" : "In Progress"}
-                </p>
-              </div>
-            ))
-          )}
+            <div className="project-grid">
+              {projects.map(project => (
+                <div className="project-card" key={project.id}>
+                  <div className="project-card-top">
+                    <span className="project-number">PROJECT #{project.id}</span>
+                    <span className={project.completed ? "status completed" : "status active"}>
+                      {project.completed ? "Completed" : "In Progress"}
+                    </span>
+                  </div>
 
+                  <h3>{project.title}</h3>
+
+                  <div className="project-detail">
+                    <span>Project Value</span>
+                    <strong>{project.totalAmount} ETH</strong>
+                  </div>
+
+                  <div className="project-detail">
+                    <span>Milestones</span>
+                    <strong>{project.milestoneCount}</strong>
+                  </div>
+
+                  <div className="address-detail">
+                    <span>Client</span>
+                    <p>{project.client}</p>
+                  </div>
+
+                  <div className="address-detail">
+                    <span>Freelancer</span>
+                    <p>{project.freelancer}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
+        <footer>
+          FreelanceChain · Built on Ethereum-compatible blockchain technology
+        </footer>
       </main>
     </div>
   );
