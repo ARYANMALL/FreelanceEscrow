@@ -1,6 +1,11 @@
+import { useEffect, useState } from "react";
+import {
+  BrowserProvider,
+  Contract,
+  formatEther,
+  parseEther
+} from "ethers";
 
-import { useState } from "react";
-import { BrowserProvider, Contract, formatEther, parseEther } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "./contract";
 import "./App.css";
 
@@ -78,7 +83,6 @@ function App() {
 
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
-
       const escrow = new Contract(CONTRACT_ADDRESS, ABI, signer);
 
       setAccount(address);
@@ -92,6 +96,56 @@ function App() {
       setMessage(error.shortMessage || error.message);
     }
   }
+
+  // Automatically update the app when the selected MetaMask account changes.
+  useEffect(() => {
+    if (!window.ethereum) return;
+
+    async function handleAccountsChanged(accounts) {
+      if (!accounts || accounts.length === 0) {
+        setAccount("");
+        setBalance("0");
+        setContract(null);
+        setProjects([]);
+        setMessage("Wallet disconnected. Connect your wallet to continue.");
+        return;
+      }
+
+      try {
+        const provider = new BrowserProvider(window.ethereum);
+        const network = await provider.getNetwork();
+
+        if (network.chainId !== 1337n) {
+          setAccount("");
+          setBalance("0");
+          setContract(null);
+          setProjects([]);
+          setMessage("Please switch MetaMask to Ganache (Chain ID 1337).");
+          return;
+        }
+
+        const signer = await provider.getSigner();
+        const address = await signer.getAddress();
+        const escrow = new Contract(CONTRACT_ADDRESS, ABI, signer);
+
+        setAccount(address);
+        setContract(escrow);
+        setMessage("Wallet account changed successfully!");
+
+        await updateBalance(address);
+        await loadProjects(escrow);
+      } catch (error) {
+        console.error("Account change error:", error);
+        setMessage(error.shortMessage || error.message);
+      }
+    }
+
+    window.ethereum.on("accountsChanged", handleAccountsChanged);
+
+    return () => {
+      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+    };
+  }, []);
 
   async function createProject(event) {
     event.preventDefault();
@@ -121,7 +175,6 @@ function App() {
       setMessage("Waiting for transaction confirmation...");
 
       const value = parseEther(amount);
-
       const tx = await contract.createProject(
         freelancer,
         title,
@@ -208,7 +261,9 @@ function App() {
       <nav className="navbar">
         <div className="brand">
           <div className="brand-icon">F</div>
-          <span>Freelance<span className="accent">Chain</span></span>
+          <span>
+            Freelance<span className="accent">Chain</span>
+          </span>
         </div>
 
         <button
@@ -226,16 +281,22 @@ function App() {
         <section className="hero">
           <div>
             <span className="eyebrow">DECENTRALIZED FREELANCING</span>
-            <h1>Work together.<br /><span>Pay with confidence.</span></h1>
+            <h1>
+              Work together.
+              <br />
+              <span>Pay with confidence.</span>
+            </h1>
             <p>
-              A secure blockchain-powered escrow platform.
-              Create projects, manage milestones, and release payments transparently.
+              A secure blockchain-powered escrow platform. Create projects,
+              manage milestones, and release payments transparently.
             </p>
           </div>
 
           <div className="hero-card">
             <span className="small-label">YOUR WALLET BALANCE</span>
-            <h2>{balance} <span>ETH</span></h2>
+            <h2>
+              {balance} <span>ETH</span>
+            </h2>
             <div className="network-status">
               <span className="status-dot"></span>
               Ganache Local Network
@@ -243,11 +304,7 @@ function App() {
           </div>
         </section>
 
-        {message && (
-          <div className="message">
-            {message}
-          </div>
-        )}
+        {message && <div className="message">{message}</div>}
 
         <section className="stats">
           <div className="stat-card">
@@ -256,11 +313,11 @@ function App() {
           </div>
           <div className="stat-card">
             <span>Active Projects</span>
-            <h2>{projects.filter(p => !p.completed).length}</h2>
+            <h2>{projects.filter((p) => !p.completed).length}</h2>
           </div>
           <div className="stat-card">
             <span>Completed Projects</span>
-            <h2>{projects.filter(p => p.completed).length}</h2>
+            <h2>{projects.filter((p) => p.completed).length}</h2>
           </div>
         </section>
 
@@ -278,21 +335,21 @@ function App() {
               <label>Freelancer Wallet Address</label>
               <input
                 value={freelancer}
-                onChange={e => setFreelancer(e.target.value)}
+                onChange={(e) => setFreelancer(e.target.value)}
                 placeholder="0x..."
               />
 
               <label>Project Title</label>
               <input
                 value={title}
-                onChange={e => setTitle(e.target.value)}
+                onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Website Development"
               />
 
               <label>Milestone Description</label>
               <textarea
                 value={description}
-                onChange={e => setDescription(e.target.value)}
+                onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe the work to be completed..."
                 rows="3"
               />
@@ -303,11 +360,14 @@ function App() {
                 min="0"
                 step="any"
                 value={amount}
-                onChange={e => setAmount(e.target.value)}
+                onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.10"
               />
 
-              <button className="primary-button" disabled={loading || !contract}>
+              <button
+                className="primary-button"
+                disabled={loading || !contract}
+              >
                 {loading ? "Processing..." : "Create Project & Deposit"}
               </button>
             </form>
@@ -328,7 +388,7 @@ function App() {
                 type="number"
                 min="1"
                 value={projectId}
-                onChange={e => setProjectId(e.target.value)}
+                onChange={(e) => setProjectId(e.target.value)}
                 placeholder="Enter project ID"
               />
 
@@ -337,7 +397,7 @@ function App() {
                 type="number"
                 min="0"
                 value={milestoneId}
-                onChange={e => setMilestoneId(e.target.value)}
+                onChange={(e) => setMilestoneId(e.target.value)}
                 placeholder="0"
               />
 
@@ -358,7 +418,8 @@ function App() {
               </button>
 
               <p className="helper-text">
-                Freelancer submits completed work. Client approves it to release payment.
+                Freelancer submits completed work. Client approves it to
+                release payment.
               </p>
             </div>
           </div>
@@ -381,11 +442,17 @@ function App() {
             </div>
           ) : (
             <div className="project-grid">
-              {projects.map(project => (
+              {projects.map((project) => (
                 <div className="project-card" key={project.id}>
                   <div className="project-card-top">
-                    <span className="project-number">PROJECT #{project.id}</span>
-                    <span className={project.completed ? "status completed" : "status active"}>
+                    <span className="project-number">
+                      PROJECT #{project.id}
+                    </span>
+                    <span
+                      className={
+                        project.completed ? "status completed" : "status active"
+                      }
+                    >
                       {project.completed ? "Completed" : "In Progress"}
                     </span>
                   </div>
