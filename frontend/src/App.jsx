@@ -28,7 +28,7 @@ export default function App() {
   const [projectId, setProjectId] = useState("");
   const [milestoneId, setMilestoneId] = useState("0");
 
-  // Update wallet balance
+  // Wallet balance
   async function updateBalance(address) {
     try {
       const provider = new BrowserProvider(window.ethereum);
@@ -39,9 +39,11 @@ export default function App() {
     }
   }
 
-  // Load all projects
+  // Load projects
   async function loadProjects(activeContract) {
     try {
+      setMessage("Loading projects...");
+
       const count = await activeContract.projectCount();
       const loadedProjects = [];
 
@@ -51,14 +53,21 @@ export default function App() {
           const milestoneCount =
             await activeContract.getMilestoneCount(i);
 
+          const status = Number(data.status);
+
           loadedProjects.push({
-            id: i,
+            id: Number(data.id),
             client: data.client,
             freelancer: data.freelancer,
             title: data.title,
-            totalAmount: formatEther(data.totalAmount),
-            completed: data.completed,
+            totalAmount: formatEther(data.totalBudget),
+            releasedAmount: formatEther(data.releasedAmount),
+            status,
+            exists: data.exists,
+            disputeId: Number(data.disputeId),
+            createdAt: Number(data.createdAt),
             milestoneCount: Number(milestoneCount),
+            completed: status === 2,
           });
         } catch (error) {
           console.error(`Project ${i} loading error:`, error);
@@ -66,19 +75,30 @@ export default function App() {
       }
 
       setProjects(loadedProjects);
+      setMessage(
+        loadedProjects.length
+          ? `Loaded ${loadedProjects.length} project(s).`
+          : "No projects could be loaded."
+      );
     } catch (error) {
       console.error("Loading projects error:", error);
-      setMessage("Unable to load projects. Check your network.");
+      setMessage(
+        error.shortMessage ||
+          error.message ||
+          "Unable to load projects. Check the contract address and network."
+      );
     }
   }
 
-  // Connect MetaMask
+  // Connect wallet
   async function connectWallet() {
     try {
       if (!window.ethereum) {
         setMessage("MetaMask is not installed.");
         return;
       }
+
+      setLoading(true);
 
       const provider = new BrowserProvider(window.ethereum);
       const accounts = await provider.send("eth_requestAccounts", []);
@@ -91,9 +111,7 @@ export default function App() {
       const network = await provider.getNetwork();
 
       if (Number(network.chainId) !== CHAIN_ID) {
-        setMessage(
-          "Please switch MetaMask to Ganache Local (Chain ID 1337)."
-        );
+        setMessage("Switch MetaMask to Ganache Local (Chain ID 1337).");
         return;
       }
 
@@ -106,18 +124,37 @@ export default function App() {
         signer
       );
 
+      // Verify that the address contains a contract
+      const code = await provider.getCode(CONTRACT_ADDRESS);
+
+      if (code === "0x") {
+        setMessage(
+          "No smart contract found at this address. Check contract.js."
+        );
+        return;
+      }
+
+      // Test contract connection
+      const count = await activeContract.projectCount();
+
       setAccount(activeAccount);
       setContract(activeContract);
 
-      setMessage("Wallet connected successfully!");
-
       await updateBalance(activeAccount);
       await loadProjects(activeContract);
+
+      setMessage(
+        `Connected successfully. Contract contains ${count.toString()} project(s).`
+      );
     } catch (error) {
       console.error("Wallet connection error:", error);
       setMessage(
-        error.shortMessage || error.message || "Failed to connect wallet."
+        error.shortMessage ||
+          error.message ||
+          "Failed to connect wallet."
       );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -145,56 +182,40 @@ export default function App() {
         return;
       }
 
-      // Validate freelancer address
       if (!isAddress(freelancerAddress)) {
-        setMessage(
-          "Invalid wallet address. Enter a valid Ethereum address."
-        );
+        setMessage("Invalid freelancer wallet address.");
         return;
       }
 
-      // Convert address into checksum format
-      const validFreelancerAddress = getAddress(freelancerAddress);
+      const validFreelancerAddress = getAddress(
+        freelancerAddress
+      );
 
-      // Client and freelancer cannot be the same
       if (
         validFreelancerAddress.toLowerCase() ===
         account.toLowerCase()
       ) {
-        setMessage(
-          "Client and freelancer must use different wallet addresses."
-        );
+        setMessage("Client and freelancer must be different wallets.");
         return;
       }
 
-      // Validate amount
-      if (
-        !Number.isFinite(Number(amount)) ||
-        Number(amount) <= 0
-      ) {
-        setMessage("Enter a valid amount greater than zero.");
+      if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+        setMessage("Enter an amount greater than zero.");
         return;
       }
-
-      setLoading(true);
-      setMessage("Preparing transaction...");
 
       const value = parseEther(amount);
 
-      console.log("Client:", account);
-      console.log("Freelancer:", validFreelancerAddress);
-      console.log("Contract:", CONTRACT_ADDRESS);
-      console.log("Amount:", amount);
+      setLoading(true);
+      setMessage("Waiting for transaction confirmation...");
 
       const tx = await contract.createProject(
         validFreelancerAddress,
         projectTitle,
         [milestoneDescription],
         [value],
-        { value: value }
+        { value }
       );
-
-      setMessage("Transaction submitted. Waiting for confirmation...");
 
       await tx.wait();
 
@@ -209,12 +230,11 @@ export default function App() {
       await updateBalance(account);
     } catch (error) {
       console.error("Create project error:", error);
-
       setMessage(
         error.reason ||
           error.shortMessage ||
           error.message ||
-          "Transaction failed."
+          "Project creation failed."
       );
     } finally {
       setLoading(false);
@@ -226,13 +246,43 @@ export default function App() {
     event.preventDefault();
 
     try {
-      if (!contract) {
+      if (!contract || !account) {
         setMessage("Connect your wallet first.");
         return;
       }
 
       if (projectId === "" || milestoneId === "") {
-        setMessage("Enter project and milestone IDs.");
+        setMessage("Enter project ID and milestone ID.");
+        return;
+      }
+
+      const selectedProject = projects.find(
+        (p) => p.id === Number(projectId)
+      );
+
+      if (!selectedProject) {
+        setMessage("Project not found. Refresh the dashboard.");
+        return;
+      }
+
+      if (
+        selectedProject.freelancer.toLowerCase() !==
+        account.toLowerCase()
+      ) {
+        setMessage("Only the assigned freelancer can submit this milestone.");
+        return;
+      }
+
+      const mId = Number(milestoneId);
+
+      if (
+        !Number.isInteger(mId) ||
+        mId < 0 ||
+        mId >= selectedProject.milestoneCount
+      ) {
+        setMessage(
+          `Invalid milestone ID. This project has ${selectedProject.milestoneCount} milestone(s).`
+        );
         return;
       }
 
@@ -241,7 +291,7 @@ export default function App() {
 
       const tx = await contract.submitMilestone(
         Number(projectId),
-        Number(milestoneId)
+        mId
       );
 
       await tx.wait();
@@ -263,18 +313,48 @@ export default function App() {
     }
   }
 
-  // Approve milestone and release payment
+  // Approve milestone
   async function approveMilestone(event) {
     event.preventDefault();
 
     try {
-      if (!contract) {
+      if (!contract || !account) {
         setMessage("Connect your wallet first.");
         return;
       }
 
       if (projectId === "" || milestoneId === "") {
-        setMessage("Enter project and milestone IDs.");
+        setMessage("Enter project ID and milestone ID.");
+        return;
+      }
+
+      const selectedProject = projects.find(
+        (p) => p.id === Number(projectId)
+      );
+
+      if (!selectedProject) {
+        setMessage("Project not found. Refresh the dashboard.");
+        return;
+      }
+
+      if (
+        selectedProject.client.toLowerCase() !==
+        account.toLowerCase()
+      ) {
+        setMessage("Only the project client can approve milestones.");
+        return;
+      }
+
+      const mId = Number(milestoneId);
+
+      if (
+        !Number.isInteger(mId) ||
+        mId < 0 ||
+        mId >= selectedProject.milestoneCount
+      ) {
+        setMessage(
+          `Invalid milestone ID. This project has ${selectedProject.milestoneCount} milestone(s).`
+        );
         return;
       }
 
@@ -283,12 +363,12 @@ export default function App() {
 
       const tx = await contract.approveMilestone(
         Number(projectId),
-        Number(milestoneId)
+        mId
       );
 
       await tx.wait();
 
-      setMessage("Milestone approved and payment released!");
+      setMessage("Milestone approved successfully!");
 
       await loadProjects(contract);
       await updateBalance(account);
@@ -306,7 +386,7 @@ export default function App() {
     }
   }
 
-  // Handle MetaMask account switching
+  // Wallet account switching
   useEffect(() => {
     if (!window.ethereum) return;
 
@@ -327,7 +407,8 @@ export default function App() {
         if (Number(network.chainId) !== CHAIN_ID) {
           setAccount("");
           setContract(null);
-          setMessage("Please switch to Ganache Local.");
+          setProjects([]);
+          setMessage("Switch to Ganache Local.");
           return;
         }
 
@@ -371,18 +452,28 @@ export default function App() {
     };
   }, []);
 
-  // Shorten wallet address
   function shortenAddress(address) {
     if (!address) return "";
-    return address.slice(0, 6) + "..." + address.slice(-4);
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  }
+
+  function getStatus(status) {
+    switch (status) {
+      case 1:
+        return "Active";
+      case 2:
+        return "Completed";
+      case 3:
+        return "Disputed";
+      default:
+        return `Status ${status}`;
+    }
   }
 
   return (
     <div className="app">
       <style>{`
-        * {
-          box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
           margin: 0;
@@ -391,15 +482,11 @@ export default function App() {
           color: #f8fafc;
         }
 
-        button, input, textarea {
-          font: inherit;
-        }
+        button, input, textarea { font: inherit; }
 
         .app {
           min-height: 100vh;
-          background:
-            radial-gradient(circle at top right, #172554, transparent 35%),
-            #0b1120;
+          background: radial-gradient(circle at top right, #172554, transparent 35%), #0b1120;
         }
 
         .navbar {
@@ -412,15 +499,8 @@ export default function App() {
           gap: 15px;
         }
 
-        .logo {
-          font-size: 23px;
-          font-weight: 800;
-          color: #fff;
-        }
-
-        .logo span {
-          color: #38bdf8;
-        }
+        .logo { font-size: 23px; font-weight: 800; color: white; }
+        .logo span { color: #38bdf8; }
 
         .nav-right {
           display: flex;
@@ -447,33 +527,12 @@ export default function App() {
           transition: 0.2s;
         }
 
-        .button:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .primary {
-          background: #38bdf8;
-          color: #07111f;
-        }
-
-        .primary:hover {
-          background: #7dd3fc;
-        }
-
-        .secondary {
-          background: #263449;
-          color: #e2e8f0;
-        }
-
-        .secondary:hover {
-          background: #334155;
-        }
-
-        .green {
-          background: #22c55e;
-          color: #052e16;
-        }
+        .button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .primary { background: #38bdf8; color: #07111f; }
+        .primary:hover { background: #7dd3fc; }
+        .secondary { background: #263449; color: #e2e8f0; }
+        .secondary:hover { background: #334155; }
+        .green { background: #22c55e; color: #052e16; }
 
         .hero {
           padding: 65px 7% 40px;
@@ -487,9 +546,7 @@ export default function App() {
           line-height: 1.1;
         }
 
-        .hero h1 span {
-          color: #38bdf8;
-        }
+        .hero h1 span { color: #38bdf8; }
 
         .hero p {
           max-width: 650px;
@@ -518,10 +575,7 @@ export default function App() {
           color: #38bdf8;
         }
 
-        .stat p {
-          margin: 0;
-          font-size: 13px;
-        }
+        .stat p { margin: 0; font-size: 13px; }
 
         .main {
           max-width: 1300px;
@@ -539,14 +593,9 @@ export default function App() {
           padding: 25px;
         }
 
-        .panel h2 {
-          margin: 0 0 22px;
-          font-size: 21px;
-        }
+        .panel h2 { margin: 0 0 22px; font-size: 21px; }
 
-        .form-group {
-          margin-bottom: 17px;
-        }
+        .form-group { margin-bottom: 17px; }
 
         .form-group label {
           display: block;
@@ -555,8 +604,7 @@ export default function App() {
           margin-bottom: 8px;
         }
 
-        .form-group input,
-        .form-group textarea {
+        .form-group input, .form-group textarea {
           width: 100%;
           background: #0b1120;
           border: 1px solid #334155;
@@ -566,19 +614,12 @@ export default function App() {
           outline: none;
         }
 
-        .form-group input:focus,
-        .form-group textarea:focus {
+        .form-group input:focus, .form-group textarea:focus {
           border-color: #38bdf8;
         }
 
-        .form-group textarea {
-          resize: vertical;
-          min-height: 90px;
-        }
-
-        .full {
-          width: 100%;
-        }
+        .form-group textarea { resize: vertical; min-height: 90px; }
+        .full { width: 100%; }
 
         .message {
           margin-top: 16px;
@@ -600,14 +641,9 @@ export default function App() {
           margin-bottom: 20px;
         }
 
-        .projects-header h2 {
-          margin: 0;
-        }
+        .projects-header h2 { margin: 0; }
 
-        .project-list {
-          display: grid;
-          gap: 17px;
-        }
+        .project-list { display: grid; gap: 17px; }
 
         .project-card {
           background: #0b1120;
@@ -616,10 +652,7 @@ export default function App() {
           padding: 20px;
         }
 
-        .project-card h3 {
-          margin: 0 0 12px;
-          font-size: 18px;
-        }
+        .project-card h3 { margin: 0 0 12px; font-size: 18px; }
 
         .project-card p {
           color: #94a3b8;
@@ -658,21 +691,9 @@ export default function App() {
           margin-bottom: 10px;
         }
 
-        .completed {
-          background: #064e3b;
-          color: #6ee7b7;
-        }
-
-        .pending {
-          background: #422006;
-          color: #fcd34d;
-        }
-
-        .empty {
-          text-align: center;
-          padding: 45px 20px;
-          color: #64748b;
-        }
+        .completed { background: #064e3b; color: #6ee7b7; }
+        .pending { background: #422006; color: #fcd34d; }
+        .empty { text-align: center; padding: 45px 20px; color: #64748b; }
 
         .actions {
           display: flex;
@@ -681,10 +702,7 @@ export default function App() {
           margin-top: 20px;
         }
 
-        .actions .button {
-          flex: 1;
-          min-width: 140px;
-        }
+        .actions .button { flex: 1; min-width: 140px; }
 
         .action-panel {
           margin-top: 25px;
@@ -692,10 +710,7 @@ export default function App() {
           padding-top: 22px;
         }
 
-        .action-panel h3 {
-          font-size: 16px;
-          margin: 0 0 15px;
-        }
+        .action-panel h3 { font-size: 16px; margin: 0 0 15px; }
 
         .action-inputs {
           display: grid;
@@ -712,36 +727,16 @@ export default function App() {
         }
 
         @media (max-width: 900px) {
-          .main {
-            grid-template-columns: 1fr;
-          }
+          .main { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 600px) {
-          .navbar {
-            padding: 18px 5%;
-          }
-
-          .hero {
-            padding: 45px 5% 25px;
-          }
-
-          .main {
-            padding: 20px 5% 50px;
-          }
-
-          .stats {
-            grid-template-columns: 1fr;
-          }
-
-          .action-inputs {
-            grid-template-columns: 1fr;
-          }
-
-          .projects-header {
-            align-items: flex-start;
-            flex-direction: column;
-          }
+          .navbar { padding: 18px 5%; }
+          .hero { padding: 45px 5% 25px; }
+          .main { padding: 20px 5% 50px; }
+          .stats { grid-template-columns: 1fr; }
+          .action-inputs { grid-template-columns: 1fr; }
+          .projects-header { align-items: flex-start; flex-direction: column; }
         }
       `}</style>
 
@@ -800,7 +795,7 @@ export default function App() {
 
       {/* Main */}
       <main className="main">
-        {/* Create project form */}
+        {/* Create project */}
         <section className="panel">
           <h2>Create a Project</h2>
 
@@ -876,7 +871,7 @@ export default function App() {
             {projects.length === 0 ? (
               <div className="empty">
                 <h3>No projects found</h3>
-                <p>Create your first project to get started.</p>
+                <p>Connect your wallet or refresh to load projects.</p>
               </div>
             ) : (
               projects.map((project) => (
@@ -886,7 +881,7 @@ export default function App() {
                       project.completed ? "completed" : "pending"
                     }`}
                   >
-                    {project.completed ? "Completed" : "In Progress"}
+                    {getStatus(project.status)}
                   </span>
 
                   <h3>
@@ -895,8 +890,13 @@ export default function App() {
 
                   <div className="project-meta">
                     <div className="meta">
-                      Escrow Amount
+                      Total Budget
                       <strong>{project.totalAmount} ETH</strong>
+                    </div>
+
+                    <div className="meta">
+                      Released
+                      <strong>{project.releasedAmount} ETH</strong>
                     </div>
 
                     <div className="meta">
@@ -905,13 +905,8 @@ export default function App() {
                     </div>
 
                     <div className="meta">
-                      Client
-                      <strong>{shortenAddress(project.client)}</strong>
-                    </div>
-
-                    <div className="meta">
-                      Freelancer
-                      <strong>{shortenAddress(project.freelancer)}</strong>
+                      Project Status
+                      <strong>{getStatus(project.status)}</strong>
                     </div>
                   </div>
 
@@ -945,7 +940,7 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label>Milestone ID</label>
+                  <label>Milestone ID (0-based)</label>
                   <input
                     type="number"
                     min="0"

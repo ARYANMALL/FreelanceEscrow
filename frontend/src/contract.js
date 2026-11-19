@@ -1,4 +1,4 @@
-export const CONTRACT_ADDRESS = "0x570ff9d4Ceb12575EbeFBf15E8F842459D34e752";
+export const CONTRACT_ADDRESS = "0x682cC3F849A6404fB0E6aAc561Aa2C65f6BcFa54";
 
 export const ABI = [
   "function projectCount() view returns (uint256)",
