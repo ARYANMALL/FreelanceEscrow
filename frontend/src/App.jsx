@@ -6,6 +6,7 @@ import {
   formatEther,
   parseEther,
   isAddress,
+  getAddress,
 } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "./contract";
 
@@ -27,9 +28,7 @@ export default function App() {
   const [projectId, setProjectId] = useState("");
   const [milestoneId, setMilestoneId] = useState("0");
 
-  // ----------------------------------------
   // Update wallet balance
-  // ----------------------------------------
   async function updateBalance(address) {
     try {
       const provider = new BrowserProvider(window.ethereum);
@@ -40,9 +39,7 @@ export default function App() {
     }
   }
 
-  // ----------------------------------------
-  // Load projects from blockchain
-  // ----------------------------------------
+  // Load all projects
   async function loadProjects(activeContract) {
     try {
       const count = await activeContract.projectCount();
@@ -75,9 +72,7 @@ export default function App() {
     }
   }
 
-  // ----------------------------------------
-  // Connect wallet
-  // ----------------------------------------
+  // Connect MetaMask
   async function connectWallet() {
     try {
       if (!window.ethereum) {
@@ -86,7 +81,6 @@ export default function App() {
       }
 
       const provider = new BrowserProvider(window.ethereum);
-
       const accounts = await provider.send("eth_requestAccounts", []);
 
       if (!accounts.length) {
@@ -114,6 +108,7 @@ export default function App() {
 
       setAccount(activeAccount);
       setContract(activeContract);
+
       setMessage("Wallet connected successfully!");
 
       await updateBalance(activeAccount);
@@ -121,16 +116,12 @@ export default function App() {
     } catch (error) {
       console.error("Wallet connection error:", error);
       setMessage(
-        error.shortMessage ||
-          error.message ||
-          "Failed to connect wallet."
+        error.shortMessage || error.message || "Failed to connect wallet."
       );
     }
   }
 
-  // ----------------------------------------
-  // Create project
-  // ----------------------------------------
+  // Create project and fund escrow
   async function createProject(event) {
     event.preventDefault();
 
@@ -154,17 +145,20 @@ export default function App() {
         return;
       }
 
-      // Validate wallet address before calling contract
+      // Validate freelancer address
       if (!isAddress(freelancerAddress)) {
         setMessage(
-          "Invalid freelancer wallet address. Please check it."
+          "Invalid wallet address. Enter a valid Ethereum address."
         );
         return;
       }
 
-      // Client and freelancer must be different
+      // Convert address into checksum format
+      const validFreelancerAddress = getAddress(freelancerAddress);
+
+      // Client and freelancer cannot be the same
       if (
-        freelancerAddress.toLowerCase() ===
+        validFreelancerAddress.toLowerCase() ===
         account.toLowerCase()
       ) {
         setMessage(
@@ -173,11 +167,12 @@ export default function App() {
         return;
       }
 
+      // Validate amount
       if (
         !Number.isFinite(Number(amount)) ||
         Number(amount) <= 0
       ) {
-        setMessage("Enter an amount greater than zero.");
+        setMessage("Enter a valid amount greater than zero.");
         return;
       }
 
@@ -186,12 +181,17 @@ export default function App() {
 
       const value = parseEther(amount);
 
+      console.log("Client:", account);
+      console.log("Freelancer:", validFreelancerAddress);
+      console.log("Contract:", CONTRACT_ADDRESS);
+      console.log("Amount:", amount);
+
       const tx = await contract.createProject(
-        freelancerAddress,
+        validFreelancerAddress,
         projectTitle,
         [milestoneDescription],
         [value],
-        { value }
+        { value: value }
       );
 
       setMessage("Transaction submitted. Waiting for confirmation...");
@@ -211,8 +211,8 @@ export default function App() {
       console.error("Create project error:", error);
 
       setMessage(
-        error.shortMessage ||
-          error.reason ||
+        error.reason ||
+          error.shortMessage ||
           error.message ||
           "Transaction failed."
       );
@@ -221,9 +221,7 @@ export default function App() {
     }
   }
 
-  // ----------------------------------------
-  // Submit milestone work
-  // ----------------------------------------
+  // Submit milestone
   async function submitMilestone(event) {
     event.preventDefault();
 
@@ -255,8 +253,8 @@ export default function App() {
       console.error("Submit milestone error:", error);
 
       setMessage(
-        error.shortMessage ||
-          error.reason ||
+        error.reason ||
+          error.shortMessage ||
           error.message ||
           "Milestone submission failed."
       );
@@ -265,9 +263,7 @@ export default function App() {
     }
   }
 
-  // ----------------------------------------
   // Approve milestone and release payment
-  // ----------------------------------------
   async function approveMilestone(event) {
     event.preventDefault();
 
@@ -300,8 +296,8 @@ export default function App() {
       console.error("Approve milestone error:", error);
 
       setMessage(
-        error.shortMessage ||
-          error.reason ||
+        error.reason ||
+          error.shortMessage ||
           error.message ||
           "Approval failed."
       );
@@ -310,9 +306,7 @@ export default function App() {
     }
   }
 
-  // ----------------------------------------
-  // Automatically handle account switching
-  // ----------------------------------------
+  // Handle MetaMask account switching
   useEffect(() => {
     if (!window.ethereum) return;
 
@@ -362,22 +356,14 @@ export default function App() {
       window.location.reload();
     };
 
-    window.ethereum.on(
-      "accountsChanged",
-      handleAccountsChanged
-    );
-
-    window.ethereum.on(
-      "chainChanged",
-      handleChainChanged
-    );
+    window.ethereum.on("accountsChanged", handleAccountsChanged);
+    window.ethereum.on("chainChanged", handleChainChanged);
 
     return () => {
       window.ethereum.removeListener(
         "accountsChanged",
         handleAccountsChanged
       );
-
       window.ethereum.removeListener(
         "chainChanged",
         handleChainChanged
@@ -385,22 +371,12 @@ export default function App() {
     };
   }, []);
 
-  // ----------------------------------------
   // Shorten wallet address
-  // ----------------------------------------
   function shortenAddress(address) {
     if (!address) return "";
-
-    return (
-      address.slice(0, 6) +
-      "..." +
-      address.slice(-4)
-    );
+    return address.slice(0, 6) + "..." + address.slice(-4);
   }
 
-  // ----------------------------------------
-  // UI
-  // ----------------------------------------
   return (
     <div className="app">
       <style>{`
@@ -769,7 +745,7 @@ export default function App() {
         }
       `}</style>
 
-      {/* Navbar */}
+      {/* Navigation */}
       <nav className="navbar">
         <div className="logo">
           Freelance<span>Chain</span>
@@ -792,7 +768,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Hero section */}
+      {/* Hero */}
       <section className="hero">
         <h1>
           Freelancing powered by <span>Blockchain.</span>
@@ -811,9 +787,7 @@ export default function App() {
           </div>
 
           <div className="stat">
-            <h3>
-              {projects.filter((p) => p.completed).length}
-            </h3>
+            <h3>{projects.filter((p) => p.completed).length}</h3>
             <p>Completed Projects</p>
           </div>
 
@@ -824,16 +798,15 @@ export default function App() {
         </div>
       </section>
 
-      {/* Main section */}
+      {/* Main */}
       <main className="main">
-        {/* Create project */}
+        {/* Create project form */}
         <section className="panel">
           <h2>Create a Project</h2>
 
           <form onSubmit={createProject}>
             <div className="form-group">
               <label>Freelancer Wallet Address</label>
-
               <input
                 type="text"
                 placeholder="0x..."
@@ -844,7 +817,6 @@ export default function App() {
 
             <div className="form-group">
               <label>Project Title</label>
-
               <input
                 type="text"
                 placeholder="Enter project title"
@@ -855,7 +827,6 @@ export default function App() {
 
             <div className="form-group">
               <label>Milestone Description</label>
-
               <textarea
                 placeholder="Describe the work to be completed"
                 value={description}
@@ -865,7 +836,6 @@ export default function App() {
 
             <div className="form-group">
               <label>Escrow Amount (ETH)</label>
-
               <input
                 type="number"
                 min="0"
@@ -885,12 +855,10 @@ export default function App() {
             </button>
           </form>
 
-          {message && (
-            <div className="message">{message}</div>
-          )}
+          {message && <div className="message">{message}</div>}
         </section>
 
-        {/* Projects */}
+        {/* Dashboard */}
         <section className="panel">
           <div className="projects-header">
             <h2>Project Dashboard</h2>
@@ -943,9 +911,7 @@ export default function App() {
 
                     <div className="meta">
                       Freelancer
-                      <strong>
-                        {shortenAddress(project.freelancer)}
-                      </strong>
+                      <strong>{shortenAddress(project.freelancer)}</strong>
                     </div>
                   </div>
 
@@ -969,7 +935,6 @@ export default function App() {
               <div className="action-inputs">
                 <div className="form-group">
                   <label>Project ID</label>
-
                   <input
                     type="number"
                     min="1"
@@ -981,7 +946,6 @@ export default function App() {
 
                 <div className="form-group">
                   <label>Milestone ID</label>
-
                   <input
                     type="number"
                     min="0"
