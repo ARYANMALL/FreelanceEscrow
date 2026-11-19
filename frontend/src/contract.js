@@ -1,5 +1,5 @@
 
-export const CONTRACT_ADDRESS = "0xec5b6d6377523f42283e53eda40a3196baf0691eb6f6d6de52703e6a1b6868658c71B2002Ec9a";
+export const CONTRACT_ADDRESS = "0x570ff9d4Ceb12575EbeFBf15E8F842459D34e752";
 
 export const ABI = [
   "function projectCount() view returns (uint256)",
